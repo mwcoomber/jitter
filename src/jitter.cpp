@@ -5,26 +5,12 @@
 #include <linux/mman.h>
 #include <sched.h>
 #include <unistd.h>
+#include <errno.h>
 #include <inttypes.h>
 #include <algorithm>
 #include <numeric>
 #include <cmath>
-
-uint64_t clock_start()
-{
-    uint64_t rax, rdx;
-    uint32_t aux;
-    asm volatile ( "mfence\nlfence\nrdtsc\n" : "=a" (rax), "=d" (rdx), "=c" (aux) : : );
-    return (rdx << 32) + rax;
-}
-
-uint64_t clock_stop()
-{
-    uint64_t rax, rdx;
-    uint32_t aux;
-    asm volatile ( "rdtscp\nlfence\n" : "=a" (rax), "=d" (rdx), "=c" (aux) : : );
-    return (rdx << 32) + rax;
-}
+#include <x86intrin.h>
 
 uint64_t operator""_GB(const unsigned long long x)
 { 
@@ -34,27 +20,46 @@ uint64_t operator""_GB(const unsigned long long x)
 int main(int argc, char **argv)
 {
     int opt;
-    size_t nsamples = 1_GB / sizeof(uint64_t);
+    uint64_t default_nsamples = 1_GB / sizeof(uint64_t);
+    size_t nsamples = default_nsamples;
     uint64_t print_threshold = 100000;
     uint64_t nlargest_to_print = 0;
     int32_t ncpu = 0;
+    char *end;
     while ((opt = getopt(argc, argv, "n:c:t:l:")) != -1)
     {
         switch(opt)
         {
             case 'n':
-                nsamples = atoi(optarg);    
+                nsamples = strtol(optarg, &end, 10);
                 break;
             case 'c':
-                ncpu = atoi(optarg);    
+                ncpu = strtol(optarg, &end, 10);
                 break;
             case 't':
-                print_threshold = atoi(optarg);    
+                print_threshold = strtol(optarg, &end, 10);
                 break;
             case 'l':
-                nlargest_to_print = atoi(optarg);    
+                nlargest_to_print = strtol(optarg, &end, 10);
                 break;
         }
+	if (end == optarg || *end != '\0' || errno == ERANGE)
+	{
+            fprintf(stderr, "Invalid argument: %c = %s\n", opt, optarg);
+            exit(EXIT_FAILURE);
+	}
+    }
+
+    if (nsamples == 0)
+    {
+        fprintf(stderr, "Number of samples must be greater than zero\n");
+        exit(EXIT_FAILURE);
+    }
+
+    if (nsamples > default_nsamples)
+    {
+        fprintf(stderr, "Number of samples too large\n");
+        exit(EXIT_FAILURE);
     }
 
     // Pin process to assigned CPU.
@@ -92,7 +97,7 @@ int main(int argc, char **argv)
     }
     uint64_t *samples = static_cast<uint64_t*>(mem);
 
-    // Tell OS that we are going to use the memory sequentially.
+    // Inform kernel that we are going to use the memory sequentially.
     if (madvise(samples, nbytes, MADV_SEQUENTIAL | MADV_WILLNEED) != 0)
     {
         perror("Failed to call madvise");
@@ -108,13 +113,17 @@ int main(int argc, char **argv)
 
     // Run jitter measurement loop.
     uint64_t ts1, ts2;
+    uint32_t tmp;
     for (size_t i = 0; i < nsamples; ++i)
     {
-        ts1 = clock_start();
+        _mm_mfence();
+        _mm_lfence();
+        ts1 = __rdtsc();
         /////////////////////////////
         // Code to profile goes here.
         /////////////////////////////
-        ts2 = clock_stop();
+        ts2 = __rdtscp(&tmp);
+        _mm_lfence();
         samples[i] = ts2 - ts1;
     }
 
