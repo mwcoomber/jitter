@@ -43,11 +43,11 @@ int main(int argc, char **argv)
                 nlargest_to_print = strtol(optarg, &end, 10);
                 break;
         }
-	if (end == optarg || *end != '\0' || errno == ERANGE)
-	{
-            fprintf(stderr, "Invalid argument: %c = %s\n", opt, optarg);
-            exit(EXIT_FAILURE);
-	}
+        if (end == optarg || *end != '\0' || errno == ERANGE)
+        {
+                fprintf(stderr, "Invalid argument: %c = %s\n", opt, optarg);
+                exit(EXIT_FAILURE);
+        }
     }
 
     if (nsamples == 0)
@@ -76,7 +76,11 @@ int main(int argc, char **argv)
     int max_priority = sched_get_priority_max(SCHED_FIFO);
     struct sched_param params;
     params.sched_priority = max_priority;
-    sched_setscheduler(0,SCHED_FIFO,&params);
+    if (sched_setscheduler(0,SCHED_FIFO,&params) != 0)
+    {
+        perror("Failed to set scheduler priority");
+        exit(EXIT_FAILURE);
+    }
 
     // Reserve memory for samples.
     const size_t nbytes = nsamples * sizeof(uint64_t);
@@ -84,8 +88,8 @@ int main(int argc, char **argv)
         NULL,
         nbytes,
         PROT_READ | PROT_WRITE,
-	// NOTE: MAP_UNINITIALIZED is only available if the kernel has been configured
-	//       with CONFIG_MMAP_ALLOW_UNINITIALIZED, which is usually not the case.
+        // NOTE: MAP_UNINITIALIZED is only available if the kernel has been configured
+        //       with CONFIG_MMAP_ALLOW_UNINITIALIZED, which is usually not the case.
         MAP_PRIVATE | MAP_ANONYMOUS | MAP_HUGETLB | MAP_HUGE_1GB | MAP_LOCKED | MAP_POPULATE | MAP_NORESERVE, // MAP_UNINITIALIZED,
         -1,
         0
@@ -156,7 +160,7 @@ int main(int argc, char **argv)
     const double mean = total / static_cast<double>(nsamples_used);
     auto variance_func = [&mean, &nsamples_used](double accumulator, const uint64_t& val)
     {
-	return accumulator + ((val - mean) * (val - mean)) / static_cast<double>(nsamples_used - 1);
+    return accumulator + ((val - mean) * (val - mean)) / static_cast<double>(nsamples_used - 1);
     };
     const double stddev = std::sqrt(std::accumulate(samples, samples + nsamples_used, 0.0, variance_func));
 
@@ -167,7 +171,7 @@ int main(int argc, char **argv)
         ncpu,
         samples[0],
         mean,
-	stddev,
+        stddev,
         samples[static_cast<int32_t>((nsamples_used) * 0.5)],
         samples[static_cast<int32_t>((nsamples_used) * 0.95)],
         samples[static_cast<int32_t>((nsamples_used) * 0.997)],
